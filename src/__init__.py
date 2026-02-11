@@ -1,13 +1,18 @@
 """
-Robot Control Package
+Robot Control Package - Vision-based control for ELEGOO Smart Robot Car.
 """
 
-from .myCar import myCar
 from .camera import Camera
 from .connection import connection
-from .robotCommands import robotCommands
-from .mpuPlot import mpuPlot
-from .obstacleAvoidance import States,obstacleAvoidance
-# from .mpuPlot import mpuPlot
+from .vision import Vision
+from .visionStates import VisionState, VisionDecisionMaker
+from .output import OutputCommandGenerator
 
-__all__ = ['myCar', 'camera', 'connection', 'robotCommands','mpuPlot','States','obstacleAvoidance'] 
+__all__ = [
+    "Camera",
+    "connection",
+    "Vision",
+    "VisionState",
+    "VisionDecisionMaker",
+    "OutputCommandGenerator",
+]
