@@ -2,6 +2,10 @@ import cv2
 import numpy as np
 from urllib.request import urlopen, Request
 
+CHUNK = 65536
+BUF_MAX = 2 * 1024 * 1024
+BUF_TRIM = 256 * 1024
+
 
 class Camera:
     def __init__(self, ip="192.168.4.1"):
@@ -12,42 +16,31 @@ class Camera:
         self._cap = None
         try:
             cv2.namedWindow("Camera", cv2.WINDOW_NORMAL)
-            print(f"Abriendo stream: {self.camera_url}")
-            # Intentar primero con OpenCV (algunos streams lo soportan)
             self._cap = cv2.VideoCapture(self.camera_url)
             if self._cap.isOpened():
-                # Buffer pequeño = frame más reciente, menos retardo
                 self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                print("Stream abierto con VideoCapture.")
             else:
                 self._cap.release()
                 self._cap = None
                 self._use_opencv = False
                 self._open_mjpeg_stream()
-        except Exception as e:
-            print(f"VideoCapture fallo: {e}")
+        except Exception:
             self._cap = None
             self._use_opencv = False
             self._open_mjpeg_stream()
 
     def _open_mjpeg_stream(self):
-        """Abre el stream HTTP y deja listo para leer frames MJPEG (multipart)."""
         try:
             req = Request(self.camera_url)
             req.add_header("Accept", "multipart/x-mixed-replace")
             self._stream = urlopen(req, timeout=10)
             self._buffer = b""
-            print("Stream abierto como MJPEG (multipart).")
-        except Exception as e:
-            print(f"No se pudo abrir stream MJPEG: {e}")
+        except Exception:
             self._stream = None
 
     def _read_next_mjpeg_frame(self):
-        """Lee un frame JPEG del stream multipart. Devuelve array BGR o None."""
         if self._stream is None:
             return None
-        # Lecturas grandes (64 KB) = menos llamadas por frame, más fluido
-        CHUNK = 65536
         try:
             while True:
                 if b"\xff\xd8" in self._buffer:
@@ -56,17 +49,15 @@ class Camera:
                     if end > start:
                         jpeg = bytes(self._buffer[start:end])
                         self._buffer = self._buffer[end:]
-                        arr = np.frombuffer(jpeg, dtype=np.uint8)
-                        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                        frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
                         return frame
                 chunk = self._stream.read(CHUNK)
                 if not chunk:
                     return None
                 self._buffer += chunk
-                if len(self._buffer) > 2 * 1024 * 1024:
-                    self._buffer = self._buffer[-256 * 1024:]
-        except Exception as e:
-            print(f"Error leyendo frame MJPEG: {e}")
+                if len(self._buffer) > BUF_MAX:
+                    self._buffer = self._buffer[-BUF_TRIM:]
+        except Exception:
             return None
 
     def capture(self):
@@ -74,16 +65,11 @@ class Camera:
             ok, frame = self._cap.read()
             if ok and frame is not None:
                 return frame
-            # Si falla, probar MJPEG una vez
             self._cap.release()
             self._cap = None
             self._use_opencv = False
             self._open_mjpeg_stream()
         return self._read_next_mjpeg_frame()
-
-    def show_image(self, img):
-        if img is not None:
-            cv2.imshow("Camera", img)
 
     def cleanup(self):
         if self._cap is not None:
