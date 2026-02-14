@@ -16,7 +16,7 @@ class Camera:
             # Intentar primero con OpenCV (algunos streams lo soportan)
             self._cap = cv2.VideoCapture(self.camera_url)
             if self._cap.isOpened():
-                # Buffer de 1 frame para menor latencia
+                # Buffer pequeño = frame más reciente, menos retardo
                 self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 print("Stream abierto con VideoCapture.")
             else:
@@ -46,25 +46,25 @@ class Camera:
         """Lee un frame JPEG del stream multipart. Devuelve array BGR o None."""
         if self._stream is None:
             return None
+        # Lecturas grandes (64 KB) = menos llamadas por frame, más fluido
+        CHUNK = 65536
         try:
-            # Buscar boundary en la respuesta (suele estar en Content-Type)
             while True:
                 if b"\xff\xd8" in self._buffer:
                     start = self._buffer.index(b"\xff\xd8")
                     end = self._buffer.find(b"\xff\xd9", start) + 2
                     if end > start:
-                        jpeg = self._buffer[start:end]
+                        jpeg = bytes(self._buffer[start:end])
                         self._buffer = self._buffer[end:]
                         arr = np.frombuffer(jpeg, dtype=np.uint8)
                         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                         return frame
-                # Leer en bloques grandes (64 KB) para menos syscalls y más fluido
-                chunk = self._stream.read(65536)
+                chunk = self._stream.read(CHUNK)
                 if not chunk:
                     return None
                 self._buffer += chunk
                 if len(self._buffer) > 2 * 1024 * 1024:
-                    self._buffer = self._buffer[-512 * 1024:]
+                    self._buffer = self._buffer[-256 * 1024:]
         except Exception as e:
             print(f"Error leyendo frame MJPEG: {e}")
             return None
