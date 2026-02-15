@@ -225,6 +225,63 @@ CameraPython/
 └── README.md              # Documentación
 ```
 
+---
+
+## Calibración de distancia (píxel y → cm)
+
+La cámara devuelve la posición de la bola en píxeles `(x, y)`. Para convertir la coordenada **y** (eje vertical en la imagen) en **distancia en cm** frente al robot se usa un modelo de **perspectiva**.
+
+### 1. Forma del modelo (no es capricho)
+
+La fórmula es:
+
+$$d_y(y) = \frac{a}{y - y_0} + c$$
+
+- **y**: coordenada vertical del centro de la bola en la imagen (píxeles).
+- **a, y₀, c**: parámetros de calibración.
+
+Esta forma **no es inventada**: sale de cómo una cámara proyecta la escena (modelo de perspectiva). Es el modelo típico cuando conviertes “posición en imagen” → “distancia real”.
+
+### 2. Ajustar los parámetros
+
+Hay que encontrar **a**, **y₀** y **c** que hagan que la curva:
+
+- pase cerca de **tus** puntos medidos (distancia real vs. coordenada y), y  
+- no haga cosas raras (valores disparatados o saltos).
+
+Puedes hacerlo:
+
+- **Con Excel**: como en el PDF de calibración (tabla de medidas, gráfica, ajuste).
+- **Con Python**: `scipy.optimize` o similar para un fit por mínimos cuadrados.
+- **A mano**: probar valores razonables hasta que la curva se acerque a tus datos.
+
+En el código se usó un “fit rápido” para obtener valores de ejemplo, **no** una calibración final con optimización completa.
+
+### 3. Por qué hay que “probar y₀”
+
+- **y₀** es el parámetro más delicado:
+  - Si **y₀ es muy alto** → la curva se deforma mal.
+  - Si **y₀ es muy bajo** → la curva no cuadra con las medidas.
+- Una vez fijas **y₀**, los otros (**a** y **c**) suelen salir casi solos (por álgebra o por un fit con solo 2 parámetros).
+
+### 4. Lo importante en la práctica
+
+**No** debes tomar los números del código como “ley divina”. Son un punto de partida. Lo correcto es:
+
+1. Usar **este mismo modelo** \(d_y(y) = a/(y - y_0) + c\).
+2. Ajustar **a**, **y₀** y **c** con **tus** datos (Excel o Python).
+3. Quedarte con **tu** calibración real para tu cámara y tu montaje.
+
+### 5. Cómo saber si el ajuste es bueno
+
+- Coloca la bola a **33 cm** (con cinta métrica o regla).
+- El sistema debería indicar **~33 cm** (con un margen de ±2 o ±3 cm).
+- Si te da 25 cm o 45 cm → el ajuste es malo; hay que revisar medidas y/o parámetros.
+
+En el código, la función `dy_from_y(y)` en `src/main.py` implementa esta calibración; puedes sustituir allí tus propios **a**, **y₀** y **c** una vez los tengas ajustados.
+
+---
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
