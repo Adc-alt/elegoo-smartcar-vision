@@ -1,95 +1,115 @@
-"""Main - Display BGR en tiempo real + detección bola verde (máscara B/N)."""
+"""Video del coche: OpenCV lee la URL MJPEG (mismo recurso que el navegador)."""
 import math
+import sys
+from pathlib import Path
+
 import cv2
-import numpy as np
-from .camera import Camera
-from .vision import detect_green_ball
 
-IP = "192.168.4.1"
-WINDOW = "BGR + Máscara verde"
-# Resolución más baja solo para el procesado (más rápido). Coordenadas se reescalan al original.
-SCALE = 0.75
+if __package__ is None:
+    _repo_root = Path(__file__).resolve().parent.parent
+    if str(_repo_root) not in sys.path:
+        sys.path.insert(0, str(_repo_root))
+
+from src.stream_reader import STREAM_URL
+from src.vision import green_detect
+
+WIN_BGR = "BGR"
+WIN_MASK = "mask"
+
+# Calibración: d_y ≈ a + C/(y - y0)  (y = píxel vertical del centro; d_y en cm aprox.)
+_DY_A = -10.35
+_DY_C = 7285.24
+_DY_Y0 = 87.30
+# dx = k * dy * x_prime  (x_prime en px respecto al centro de la imagen)
+_DX_K = -0.0025
 
 
-def dy_from_y(y: int) -> float:
-    """Calibración y (píxel) → distancia en cm. dy(y) ≈ 7978/(y-109) - 11.34"""
-    if y <= 109:
-        return float("inf")
-    return 7978.0 / (y - 109) - 11.34
+def estimate_dy_cm(y: float) -> float | None:
+    if y <= _DY_Y0:
+        return None
+    return _DY_A + _DY_C / (y - _DY_Y0)
 
 
-def main():
-    camera = Camera(ip=IP)
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+def estimate_dx_cm(x_prime: float, dy_cm: float) -> float:
+    return _DX_K * dy_cm * x_prime
+
+
+# r_turn = d / (2*sin(beta)); si |sin(beta)| es casi 0 (bola al frente), no definimos r
+_MIN_ABS_SIN_BETA = 0.02
+
+
+def turn_radius_cm(d_cm: float, beta_rad: float) -> float | None:
+    s = math.sin(beta_rad)
+    if abs(s) < _MIN_ABS_SIN_BETA:
+        return None
+    return d_cm / (2.0 * s)
+
+
+def main() -> None:
+    cap = cv2.VideoCapture(STREAM_URL)
+    if not cap.isOpened():
+        print("No se abre la URL (WiFi al coche, o prueba /stream en vez de /streaming):", STREAM_URL)
+        return
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    print(
+        "d_y ≈ -10.35 + 7285.24/(y-87.30) cm | dx = -0.0025 * d_y * x' | "
+        "d = hypot(dx,dy) | beta = atan2(dx,dy) | "
+        "r_turn=d/(2*sin(beta)) si |sin(beta)|>=0.02",
+        flush=True,
+    )
+    cv2.namedWindow(WIN_BGR, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WIN_MASK, cv2.WINDOW_NORMAL)
+    placed = False
     try:
         while True:
-            img_bgr = camera.capture()
-            if img_bgr is None:
-                continue
-            # Procesar a resolución reducida
-            small = cv2.resize(img_bgr, (0, 0), fx=SCALE, fy=SCALE)
-            result, mask = detect_green_ball(small)
-            # Reescalar coordenadas al tamaño original para dibujar
-            display_bgr = img_bgr.copy()
-            if result is not None:
-                x, y, r = result
-                x = int(round(x / SCALE))
-                y = int(round(y / SCALE))
-                r = int(round(r / SCALE))
-                # Hito 2.2A: x' centrado (centro imagen = 0; derecha > 0, izquierda < 0)
-                h, w = img_bgr.shape[:2]
-                x_prime = x - (w / 2.0)
-                # Hito 2.2B: dx (aprox), ángulo beta y distancia total
-                dy = dy_from_y(y)
-                k = 0.0019  # valor inicial (afinar después)
-                dx = k * dy * x_prime
-                beta = math.degrees(math.atan2(dx, dy))  # ángulo hacia la bola (grados)
-                dist = math.hypot(dx, dy)                 # distancia total en cm
-                cv2.putText(
-                    display_bgr, f"dy={dy:.1f}cm dx={dx:.1f}cm", (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
-                cv2.putText(
-                    display_bgr, f"beta={beta:.1f}deg dist={dist:.1f}cm", (10, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
-                print(f"x={x} y={y}  x'={x_prime:.1f}  dy={dy:.1f}cm  dx={dx:.1f}cm  beta={beta:.1f}deg  dist={dist:.1f}cm")
-                cv2.circle(display_bgr, (x, y), r, (0, 255, 0), 2)
-                cv2.circle(display_bgr, (x, y), 5, (0, 255, 0), -1)
-                cv2.putText(
-                    display_bgr, "BGR - bola detectada", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
-                # Coordenadas del centro en la imagen (al lado de la bola)
-                coord_text = f"({x}, {y})"
-                tx, ty = x + r + 10, y
-                cv2.putText(
-                    display_bgr, coord_text, (tx, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
-                )
-            else:
-                cv2.putText(
-                    display_bgr, "BGR - sin bola", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2
-                )
-            # Máscara B/N (3 canales para concatenar)
-            mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            cv2.putText(
-                mask_bgr, "Mascara B/N", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2
-            )
-            # Mismo tamaño para lado a lado
-            h, w = display_bgr.shape[:2]
-            if mask_bgr.shape[:2] != (h, w):
-                mask_bgr = cv2.resize(mask_bgr, (w, h))
-            combined = np.hstack([display_bgr, mask_bgr])
-            cv2.imshow(WINDOW, combined)
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                pt, mask, r_ball = green_detect(frame)
+                bgr = frame.copy()
+                h, w = bgr.shape[:2]
+                if pt is not None and r_ball > 0:
+                    x, y = pt
+                    x_prime = x - (w / 2.0)
+                    dy_cm = estimate_dy_cm(float(y))
+                    if dy_cm is not None:
+                        dx_cm = estimate_dx_cm(x_prime, dy_cm)
+                        d_cm = math.hypot(dx_cm, dy_cm)
+                        beta_rad = math.atan2(dx_cm, dy_cm)
+                        beta_deg = math.degrees(beta_rad)
+                        r_turn_cm = turn_radius_cm(d_cm, beta_rad)
+                        r_turn_s = (
+                            f"{r_turn_cm:.1f}cm"
+                            if r_turn_cm is not None
+                            else f"n/a(|sinβ|<{_MIN_ABS_SIN_BETA})"
+                        )
+                        print(
+                            f"x={x} y={y} x'={x_prime:.2f} r_px={r_ball} "
+                            f"dy={dy_cm:.2f} dx={dx_cm:.3f} d={d_cm:.2f}cm "
+                            f"beta={beta_rad:.4f}rad ({beta_deg:.1f}deg) "
+                            f"r_turn={r_turn_s}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"x={x} y={y} x'={x_prime:.2f} r_px={r_ball} dy=n/a (y<={_DY_Y0})",
+                            flush=True,
+                        )
+                    cv2.circle(bgr, pt, r_ball, (0, 255, 0), 2)
+                cv2.putText(bgr, "BGR", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+                cv2.putText(mask_bgr, "mask", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                if mask_bgr.shape[:2] != (h, w):
+                    mask_bgr = cv2.resize(mask_bgr, (w, h))
+                if not placed:
+                    cv2.moveWindow(WIN_BGR, 40, 80)
+                    cv2.moveWindow(WIN_MASK, 40 + w + 10, 80)
+                    placed = True
+                cv2.imshow(WIN_BGR, bgr)
+                cv2.imshow(WIN_MASK, mask_bgr)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-    except KeyboardInterrupt:
-        pass
     finally:
-        camera.cleanup()
+        cap.release()
         cv2.destroyAllWindows()
 
 
