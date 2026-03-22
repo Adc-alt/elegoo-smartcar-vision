@@ -13,7 +13,7 @@ if __package__ is None:
     if str(_repo_root) not in sys.path:
         sys.path.insert(0, str(_repo_root))
 
-from src.car_socket import CarSocket
+from src.car_motors import CarMotorsHttp
 from src import control as diff_ctrl
 from src.stream_reader import STREAM_URL
 from src.vision import green_detect
@@ -85,10 +85,26 @@ def main() -> None:
     ap.add_argument(
         "--no-send",
         action="store_true",
-        help="Solo muestra trayectoria y comandos; no abre TCP al coche.",
+        help="Solo muestra trayectoria y comandos; no envía HTTP al coche.",
     )
     ap.add_argument("--car-host", default="192.168.4.1", help="IP del AP del coche.")
-    ap.add_argument("--car-port", type=int, default=100, help="Puerto TCP de comandos.")
+    ap.add_argument("--car-port", type=int, default=80, help="Puerto del WebServer (HTTP).")
+    ap.add_argument(
+        "--car-path",
+        default="/motors",
+        help='Ruta POST JSON (p. ej. /motors). Debe coincidir con WebServerHost en el firmware.',
+    )
+    ap.add_argument(
+        "--car-http-timeout",
+        type=float,
+        default=0.35,
+        help="Timeout por POST (s). Cada comando abre TCP nuevo; en WiFi conviene ≥0.3.",
+    )
+    ap.add_argument(
+        "--verbose-http",
+        action="store_true",
+        help="Imprime HTTP 2xx/3xx y cuerpo de cada POST (throttle ~0.4s). Errores HTTP siempre.",
+    )
     args = ap.parse_args()
 
     cap = cv2.VideoCapture(STREAM_URL)
@@ -97,14 +113,31 @@ def main() -> None:
         return
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    car: CarSocket | None = None
+    car: CarMotorsHttp | None = None
     if not args.no_send:
-        car = CarSocket(host=args.car_host, port=args.car_port)
+        car = CarMotorsHttp(
+            host=args.car_host,
+            port=args.car_port,
+            path=args.car_path,
+            request_timeout_s=args.car_http_timeout,
+            verbose_http=args.verbose_http,
+        )
         if car.connect():
             car.start_worker()
-            print(f"TCP motores: {args.car_host}:{args.car_port} (envío en segundo plano)", flush=True)
+            base = f"http://{args.car_host}:{args.car_port}{args.car_path}"
+            vh = " + --verbose-http" if args.verbose_http else ""
+            print(f"Motores HTTP POST {base} (hilo + cola, TCP nuevo por POST){vh}", flush=True)
+            if not args.verbose_http:
+                print(
+                    '  Tip: --verbose-http para ver HTTP 200 y cuerpo (p. ej. {"ok":true}).',
+                    flush=True,
+                )
         else:
-            print(f"No conecta a {args.car_host}:{args.car_port} — modo solo visual.", flush=True)
+            print(
+                f"No responde HTTP en {args.car_host}:{args.car_port} "
+                f"(probe: GET / o POST {args.car_path}) — modo solo visual.",
+                flush=True,
+            )
             car.shutdown()
             car = None
     else:
