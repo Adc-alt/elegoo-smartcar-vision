@@ -16,6 +16,11 @@ DIST_FAR_CM = 80.0
 SPEED_BASE_NEAR = 8
 SPEED_BASE_FAR = 24
 
+# Refuerzo de giro para que el robot encare con claridad.
+# Beta<0 (bola a la izquierda en tu convención) debe hacer: right > left.
+K_BETA_SPEED = 30.0  # cuanto más grande, más diferencial
+MAX_STEER_DIFF = 16.0  # limita la diferencia máxima añadida por beta (evita saturaciones locas)
+
 
 def turn_radius_cm(beta_rad: float, dist_cm: float) -> float:
     if abs(math.degrees(beta_rad)) < DEADBAND_DEG:
@@ -60,6 +65,14 @@ def wheel_speeds_from_beta_dist(
     else:
         v_l = 2.0 * base / (1.0 + ratio)
         v_r = ratio * v_l
+
+    # P sobre beta (rad): amplifica el giro cuando el ratio geométrico se aplana (|R| >> Δ).
+    # Con beta<0 -> steer<0 -> v_l baja y v_r sube (right_speed > left_speed).
+    steer = K_BETA_SPEED * beta_rad
+    if abs(steer) > MAX_STEER_DIFF:
+        steer = math.copysign(MAX_STEER_DIFF, steer)
+    v_l = v_l + steer
+    v_r = v_r - steer
 
     v_l = max(speed_min, min(speed_max, round(v_l)))
     v_r = max(speed_min, min(speed_max, round(v_r)))
