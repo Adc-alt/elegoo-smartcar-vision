@@ -173,6 +173,8 @@ def main() -> None:
             v_l = v_r = 0
             beta_deg = 0.0
             d_cm = 0.0
+            dy_cm_debug = None
+            r_turn_display_s = None
 
             if pt is not None and r_ball > 0:
                 x, y = pt
@@ -181,6 +183,7 @@ def main() -> None:
                 cv2.circle(bgr, pt, r_ball, (0, 255, 0), 2)
 
                 if dy_cm is not None:
+                    dy_cm_debug = dy_cm
                     dx_cm = estimate_dx_cm(x_prime, dy_cm)
                     d_cm = math.hypot(dx_cm, dy_cm)
                     beta_rad = math.atan2(dx_cm, dy_cm)
@@ -221,6 +224,10 @@ def main() -> None:
                         1,
                         cv2.LINE_AA,
                     )
+
+                    # Para consola: radio de giro usando el modelo de visualización (sin deadband por dist_safe).
+                    _r_turn = turn_radius_display_cm(d_cm, beta_rad)
+                    r_turn_display_s = f"{_r_turn:.1f}cm" if _r_turn is not None else "n/a"
                 else:
                     overlay = f"no dy (y<={_DY_Y0})"
 
@@ -257,17 +264,10 @@ def main() -> None:
                 last_print_t = now
                 if pt is not None and r_ball > 0:
                     x, y = pt
-                    x_prime = x - (w / 2.0)
-                    dy_cm = estimate_dy_cm(float(y))
-                    if dy_cm is not None:
-                        dx_cm = estimate_dx_cm(x_prime, dy_cm)
-                        beta_rad = math.atan2(dx_cm, dy_cm)
-                        d_cm = math.hypot(dx_cm, dy_cm)
-                        _r = turn_radius_display_cm(d_cm, beta_rad)
-                        r_s = f"{_r:.1f}cm" if _r is not None else "n/a"
+                    if dy_cm_debug is not None:
                         print(
-                            f"x={x} y={y} d={d_cm:.2f}cm beta={math.degrees(beta_rad):+.1f}deg "
-                            f"r_turn~{r_s} | cmd L={v_l} R={v_r} | {j_compact}",
+                            f"x={x} y={y} d={d_cm:.2f}cm beta={beta_deg:+.1f}deg "
+                            f"r_turn~{r_turn_display_s} | cmd L={v_l} R={v_r} | {j_compact}",
                             flush=True,
                         )
                     else:
